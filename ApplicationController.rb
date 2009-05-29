@@ -41,7 +41,7 @@ class ApplicationController < OSX::NSObject
 		@check_alter_icon = NSImage.alloc.initWithContentsOfFile(bundle.pathForResource_ofType('check_a', 'tiff'))
 		@error_icon = NSImage.alloc.initWithContentsOfFile(bundle.pathForResource_ofType('error', 'tiff'))
 		
-		@cached_results = {}
+		@latest_msgs = {}
 		
 		@status_item.setImage(@app_icon)
 		@status_item.setAlternateImage(@app_alter_icon)
@@ -75,7 +75,7 @@ class ApplicationController < OSX::NSObject
 	def	openInboxForAccount(account)
 		account_domain = account.split("@")
 		
-		inbox_url = (account_domain.length == 2 && !["gmail.com", "googlemail.com"].include?(account_domain[1])) ? 
+		inbox_url = (account_domain.length == 2 && !["gmail.com", "googlemail.com"].include?(account_domain[1])) ?
 			"https://mail.google.com/a/#{account_domain[1]}" : "https://mail.google.com/mail"
 		NSWorkspace.sharedWorkspace.openURL(NSURL.URLWithString(inbox_url))
 	end
@@ -129,7 +129,14 @@ class ApplicationController < OSX::NSObject
 		end
 		
 		if @mail_count > 0
-			@status_item.setToolTip("#{@mail_count} unread message#{@mail_count == 1 ? '' : 's'}")
+			tooltip = []
+			results.each_key do |account|
+				messages = results[account]["messages"]
+				if messages.length > 0
+					tooltip << "#{account}: #{results[account]["count"]} unread"
+				end
+			end
+			@status_item.setToolTip(tooltip.sort.join("\n"))
 			@status_item.setImage(@mail_icon)
 			@status_item.setAlternateImage(@mail_alter_icon)
 			@status_item.setTitle(@mail_count)
@@ -146,16 +153,31 @@ class ApplicationController < OSX::NSObject
 		should_notify = false
 		
 		results.each_key do |account|
-			cached_result = @cached_results[account]
-			if cached_result[0] != cached_result[1]
-				should_notify = true
-				@growl.notify(account, cached_result[1]) if preferences.growl	
+			messages = results[account]["messages"]
+			if messages && messages.length > 0
+				if @latest_msgs[account] == nil
+					should_notify = true
+				elsif messages[0]["date"] > @latest_msgs[account]
+					should_notify = true
+				end
+				@latest_msgs[account] = messages[0]["date"]
+			end
+
+			if should_notify and preferences.growl
+				growlMessage(account, messages[0])
 			end
 		end
 		
 		if should_notify && preferences.sound != GNPreferences::SOUND_NONE && sound = NSSound.soundNamed(preferences.sound)
 			sound.play
 		end
+	end
+
+	def	growlMessage(account, msg)
+		s = "Subject: #{msg["subject"]}\n" +
+			"From: #{msg["author"]}\n\n" +
+			"#{msg["summary"]}"
+		@growl.notify(account, s)
 	end
 
 	def	checkMailByTimer(timer)
@@ -202,33 +224,20 @@ class ApplicationController < OSX::NSObject
 		accountMenu.addItem(NSMenuItem.separatorItem)
 		
 		#new messages
-		result = results.split("\n")
-		mail_count = result.shift
+		mail_count = results["count"]
 		
-		if mail_count == "E"
+		if results["err"] == "E"
 			error = "connection error"
 			item = accountMenu.addItemWithTitle_action_keyEquivalent(error, nil, "")
 			item.setImage(@error_icon)
-			cache_result(account_name, error)
-		elsif mail_count == "F"
+		elsif results["err"] == "F"
 			error = "username/password wrong"
 			item = accountMenu.addItemWithTitle_action_keyEquivalent(error, nil, "")
 			item.setImage(@error_icon)
-			cache_result(account_name, error)
 		else
-			mail_count = mail_count.to_i
-			@mail_count += mail_count.to_i
-			tooltip = "#{mail_count} unread message#{mail_count == 1 ? '' : 's'}"
-			result.each do |msg|
-				accountMenu.addItemWithTitle_action_keyEquivalent_(msg, nil, "")
-			end
-			
-			if mail_count == 0
-				# no unread messages: force to clear cache_result
-				cache_result(account_name, "")
-				cache_result(account_name, "")
-			else
-				cache_result(account_name, tooltip + "\n" + result.join("\n"))
+			@mail_count += mail_count
+			results["messages"].each do |msg|
+				accountMenu.addItemWithTitle_action_keyEquivalent_("#{msg["author"]} - #{msg["subject"]}", nil, "")
 			end
 		end
 		
@@ -240,11 +249,5 @@ class ApplicationController < OSX::NSObject
 		accountItem.action = 'openInbox'
 		
 		@status_item.menu.insertItem_atIndex(accountItem, pos)
-	end
-	
-	def	cache_result(account, result)
-		@cached_results[account] ||= ["", ""]
-		@cached_results[account][0] = @cached_results[account][1]
-		@cached_results[account][1] = result
 	end
 end

@@ -15,7 +15,7 @@ class GmailChecker
 		http.use_ssl = true
 		http.verify_mode = OpenSSL::SSL::VERIFY_NONE
 		response = nil
-		result = "E"
+		result = { "err" => "E" }
 
 		begin
 		  http.start do |http|
@@ -27,20 +27,22 @@ class GmailChecker
 		  if response
 			case response.code
 			when "401" #HTTPUnauthorized
-				result = "F"
+				result["err"] = "F"
 			when "200" #HTTPOK				
+				result["err"] = nil
 				feed = REXML::Document.new response.body
-				# messages count
-				result = [feed.get_elements('/feed/fullcount')[0].text]
-				
+				result["count"] = feed.get_elements('/feed/fullcount')[0].text.to_i
+				result["messages"] = []
 				feed.each_element('/feed/entry') do |msg|
 					# only return first 10 messages
-					result << "..." and break if result.size > 10
-				
-					result << "#{msg.get_elements('author/name')[0].text}: #{msg.get_elements('title')[0].text}"
+					break if result["messages"].size > 10
+					result["messages"] << {
+						"date"     => DateTime.parse(msg.get_elements('issued')[0].text),
+						"author"   => msg.get_elements('author/name')[0].text,
+						"subject"  => msg.get_elements('title')[0].text,
+						"summary"  => msg.get_elements('summary')[0].text
+					}
 				end
-				
-				result = result.join("\n")
 			end
 		  end
 		rescue REXML::ParseException => e
@@ -61,4 +63,4 @@ results = {}
 end
 
 print results.to_yaml
- 
+
