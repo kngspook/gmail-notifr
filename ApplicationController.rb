@@ -160,11 +160,25 @@ class ApplicationController < OSX::NSObject
 				elsif messages[0]["date"] > @latest_msgs[account]
 					should_notify = true
 				end
-				@latest_msgs[account] = messages[0]["date"]
 			end
 
 			if should_notify and preferences.growl
-				growlMessage(account, messages[0])
+				puts messages[0]
+				if @latest_msgs[account] == nil
+					for msg in messages
+						growlMessage(account, msg)
+					end
+				else
+					for msg in messages
+						if msg["date"] > @latest_msgs[account]
+							growlMessage(account, msg)
+						end
+					end
+				end
+			end
+			
+			if messages && messages.length > 0
+				@latest_msgs[account] = messages[0]["date"]
 			end
 		end
 		
